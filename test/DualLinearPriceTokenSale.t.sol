@@ -38,10 +38,6 @@ contract DualLinearPriceTokenSaleTest is Test {
         linearSale = new DualLinearPriceTokenSale(TOTAL_SUPPLY);
         vm.stopPrank();
 
-        // Seed the contract with some eth
-        // TODO: Fix
-        vm.deal(address(linearSale), 100 ether);
-
         token = linearSale.token();
     }
 
@@ -116,7 +112,7 @@ contract DualLinearPriceTokenSaleTest is Test {
         }
         // Loop through the users and have them purchase tokens
         uint256 previousPrice = linearSale.INITIAL_PRICE();
-        uint256 totalHoldersBalance = linearSale.totalHoldersBalance();
+        uint256 totalHoldersBalance = token.totalSupply();
         uint256 totalHoldersCount = linearSale.getHolderCount();
         for (uint256 i = 0; i < numUsers; i++) {
             // Get the user address
@@ -124,6 +120,9 @@ contract DualLinearPriceTokenSaleTest is Test {
             vm.deal(user, 100 ether);
             // Calculate the purchase amount for this user
             uint256 purchaseAmount = (i + 1) * 1 ether;
+            console.log("Buy amount: ", purchaseAmount, " for user: ", i);
+            console.log("Current price: ", linearSale.getCurrentPrice());
+            console.log("Contract eth balance: ", address(linearSale).balance);
             // Have the user purchase the tokens
             vm.prank(user);
             linearSale.buyTokens{value: purchaseAmount}();
@@ -133,13 +132,13 @@ contract DualLinearPriceTokenSaleTest is Test {
             // Making sure invariant holds
             assertGt(currentPrice, previousPrice);
             previousPrice = currentPrice;
-            assertGt(linearSale.totalHoldersBalance(), totalHoldersBalance);
-            totalHoldersBalance = linearSale.totalHoldersBalance();
+            assertGt(token.totalSupply(), totalHoldersBalance);
+            totalHoldersBalance = token.totalSupply();
             assertGt(linearSale.getHolderCount(), totalHoldersCount);
             totalHoldersCount = linearSale.getHolderCount();
         }
         previousPrice = linearSale.getCurrentPrice();
-        totalHoldersBalance = linearSale.totalHoldersBalance();
+        totalHoldersBalance = token.totalSupply();
         totalHoldersCount = linearSale.getHolderCount();
         // Loop through the users and have them sell tokens
         for (uint256 i = 0; i < numUsers; i++) {
@@ -147,7 +146,6 @@ contract DualLinearPriceTokenSaleTest is Test {
             address user = addresses[i];
             // Jeet all the tokens
             uint256 sellAmount = token.balanceOf(user);
-            console.log("Sell amount: ", sellAmount, i);
             // Have the user sell the tokens
             vm.startPrank(user);
             token.approve(address(linearSale), sellAmount);
@@ -158,13 +156,15 @@ contract DualLinearPriceTokenSaleTest is Test {
             // Making sure invariant holds
             assertLt(currentPrice, previousPrice);
             previousPrice = currentPrice;
-            assertLt(linearSale.totalHoldersBalance(), totalHoldersBalance);
-            totalHoldersBalance = linearSale.totalHoldersBalance();
+            assertLt(token.totalSupply(), totalHoldersBalance);
+            totalHoldersBalance = token.totalSupply();
             assertLt(linearSale.getHolderCount(), totalHoldersCount);
             totalHoldersCount = linearSale.getHolderCount();
 
             // Make sure user is no longer holder after selling all tokens
             assertFalse(linearSale.isHolder(user));
         }
+        // Make sure no eth in the contract
+        assertLe(address(linearSale).balance, 1 ether);
     }
 }

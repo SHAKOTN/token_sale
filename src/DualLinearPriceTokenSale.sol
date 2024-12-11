@@ -5,10 +5,17 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {console} from "../lib/forge-std/src/console.sol";
 
 contract LinearToken is ERC20, Ownable {
-    constructor(uint256 totalSupply) ERC20("Linear Price Token", "LPT") Ownable(msg.sender) {
-        _mint(msg.sender, totalSupply);
+    constructor(uint256 totalSupply) ERC20("Linear Price Token", "LPT") Ownable(msg.sender) {}
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) external onlyOwner {
+        _burn(from, amount);
     }
 }
 
@@ -25,9 +32,6 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     // Holder tracking
     EnumerableSet.AddressSet private holders;
 
-    // Total balance of all holders
-    uint256 public totalHoldersBalance;
-
     event TokensPurchased(address indexed buyer, uint256 ethAmount, uint256 tokenAmount);
     event TokensSold(address indexed seller, uint256 tokenAmount, uint256 ethAmount);
     event PriceUpdate(uint256 newPrice);
@@ -42,12 +46,48 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     /////////////////////////////////////////////////////////////////
 
     function getCurrentPrice() public view returns (uint256) {
-        if (holders.length() == 0 || totalHoldersBalance == 0) {
+        if (holders.length() == 0 || token.totalSupply() == 0) {
             return INITIAL_PRICE;
         }
-        uint256 supplyImpact = SUPPLY_RATE * totalHoldersBalance / 10 ** token.decimals();
+        uint256 supplyImpact = SUPPLY_RATE * token.totalSupply() / 10 ** token.decimals();
         uint256 holderImpact = HOLDER_RATE * holders.length();
         return INITIAL_PRICE + supplyImpact + holderImpact;
+    }
+
+    function calculateSellPrice(uint256 tokenAmount) public view returns (uint256) {
+        uint256 adjustedHolders = holders.length() - 1;
+        uint256 adjustedBalance = token.totalSupply() - tokenAmount;
+
+        if (adjustedHolders == 0 || adjustedBalance == 0) {
+            return INITIAL_PRICE;
+        }
+
+        uint256 supplyImpact = SUPPLY_RATE * adjustedBalance / 10 ** token.decimals();
+        uint256 holderImpact = HOLDER_RATE * adjustedHolders;
+        return INITIAL_PRICE + supplyImpact + holderImpact;
+    }
+
+    function getPrice(bool isBuying, uint256 amount) public view returns (uint256) {
+        if (isBuying) {
+            // For buying, use future state (after buyer joins)
+            uint256 futureHolders = holders.length() + 1;
+            uint256 futureBalance = token.totalSupply() + amount;
+            uint256 supplyImpact = SUPPLY_RATE * futureBalance / 10 ** token.decimals();
+            uint256 holderImpact = HOLDER_RATE * futureHolders;
+            return INITIAL_PRICE + supplyImpact + holderImpact;
+        } else {
+            // For selling, use state after seller leaves
+            uint256 remainingHolders = holders.length() - 1;
+            uint256 remainingBalance = token.totalSupply() - amount;
+
+            if (remainingHolders == 0 || remainingBalance == 0) {
+                return INITIAL_PRICE;
+            }
+
+            uint256 supplyImpact = SUPPLY_RATE * remainingBalance / 10 ** token.decimals();
+            uint256 holderImpact = HOLDER_RATE * remainingHolders;
+            return INITIAL_PRICE + supplyImpact + holderImpact;
+        }
     }
 
     function calculateTokenAmount(uint256 ethAmount) public view returns (uint256) {
@@ -59,7 +99,7 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     function calculateEthAmount(uint256 tokenAmount) public view returns (uint256) {
         require(tokenAmount > 0, "Amount must be greater than 0");
         // In case there is one holder, we should give back only the initial price
-        uint256 currentPrice = holders.length() > 1 ? getCurrentPrice() : INITIAL_PRICE;
+        uint256 currentPrice = holders.length() > 1 ? calculateSellPrice(tokenAmount) : INITIAL_PRICE;
         return (tokenAmount * currentPrice) / 10 ** token.decimals();
     }
 
@@ -80,48 +120,38 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
 
         uint256 tokenAmount = calculateTokenAmount(msg.value);
         require(tokenAmount > 0, "Not enough ETH sent");
-        require(token.balanceOf(address(this)) >= tokenAmount, "Not enough tokens available");
 
-        uint256 oldBalance = token.balanceOf(msg.sender);
-        require(token.transfer(msg.sender, tokenAmount), "Token transfer failed");
-        uint256 newBalance = token.balanceOf(msg.sender);
-
-        _updateHolderInfo(msg.sender, oldBalance, newBalance);
+        token.mint(msg.sender, tokenAmount);
+        _updateHolderInfo(msg.sender);
         emit TokensPurchased(msg.sender, msg.value, tokenAmount);
     }
 
     function sellTokens(uint256 tokenAmount) external nonReentrant {
         require(tokenAmount > 0, "Amount must be greater than 0");
-        require(token.balanceOf(msg.sender) >= tokenAmount, "Not enough tokens");
 
         uint256 ethAmount = calculateEthAmount(tokenAmount);
         require(address(this).balance >= ethAmount, "Contract has insufficient ETH balance");
 
-        uint256 oldBalance = token.balanceOf(msg.sender);
         require(token.transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
-        uint256 newBalance = token.balanceOf(msg.sender);
 
-        _updateHolderInfo(msg.sender, oldBalance, newBalance);
+        token.burn(address(this), tokenAmount);
+        _updateHolderInfo(msg.sender);
         (bool success,) = payable(msg.sender).call{value: ethAmount}("");
         require(success, "ETH transfer failed");
         emit TokensSold(msg.sender, tokenAmount, ethAmount);
     }
 
     //////////////////////// Internal functions /////////////////////////
-    function _updateHolderInfo(address user, uint256 oldBalance, uint256 newBalance) private {
-        if (!holders.contains(user) && newBalance > 0) {
+    function _updateHolderInfo(address user) private {
+        uint256 userBalance = token.balanceOf(user);
+        if (!holders.contains(user) && userBalance > 0) {
             // New holder
             holders.add(user);
-            totalHoldersBalance += newBalance;
         } else if (holders.contains(user)) {
             // Existing holder
-            if (newBalance == 0) {
+            if (userBalance == 0) {
                 // Remove holder
                 holders.remove(user);
-                totalHoldersBalance -= oldBalance;
-            } else {
-                // Update total balance
-                totalHoldersBalance = totalHoldersBalance - oldBalance + newBalance;
             }
         }
     }
