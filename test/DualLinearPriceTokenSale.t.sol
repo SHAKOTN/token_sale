@@ -150,7 +150,7 @@ contract DualLinearPriceTokenSaleTest is Test {
             vm.startPrank(user);
             token.approve(address(linearSale), sellAmount);
             linearSale.sellTokens(sellAmount);
-
+            console.log("Holders amount: ", linearSale.getHolderCount());
             // Check that the price has increased
             uint256 currentPrice = linearSale.getCurrentPrice();
             // Making sure invariant holds
@@ -162,7 +162,7 @@ contract DualLinearPriceTokenSaleTest is Test {
             totalHoldersCount = linearSale.getHolderCount();
 
             // Make sure user is no longer holder after selling all tokens
-            assertFalse(linearSale.isHolder(user));
+            assertEq(0, token.balanceOf(user));
         }
         // Make sure no eth in the contract
         assertLe(address(linearSale).balance, 1 ether);
