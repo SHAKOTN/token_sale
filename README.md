@@ -12,15 +12,21 @@ Where:
 
 (Figure 1) shows the graph of the formula, where x-axis is the total ETH received by contract and y-axis is the token price in ETH.
 
-<svg width="800" height="400" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="white"/>
-    <line x1="50" y1="350" x2="750" y2="350" stroke="black"/>
-    <line x1="50" y1="50" x2="50" y2="350" stroke="black"/>
-    <line x1="50" y1="350" x2="750" y2="50" stroke="blue" stroke-width="2"/>
-    <text x="400" y="380" text-anchor="middle">ETH Received</text>
-    <text x="30" y="200" transform="rotate(-90,30,200)">Price</text>
-    <text x="400" y="30" text-anchor="middle">P = Pᵢ + (α × ETHᵣ)</text>
-</svg>
+```
+Price
+^
+|                                      *
+|                                 *
+|                            *
+|                       *
+|                  *
+|             *
+|        *
+|   *
+|*
++---------------------------------> ETH Received
+0                             100k
+```
 
 The reason it is implemented like this, is because it requires minimum effort and it is hard to game this sale model.
 Price pump or dump depends only on one factor - total ETH received by contract.
