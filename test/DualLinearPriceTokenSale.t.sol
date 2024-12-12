@@ -338,6 +338,21 @@ contract DualLinearPriceTokenSaleTest is Test {
 
         // Should get approximately same ETH amount back
         assertEq(ethAmount, ethForTokens);
+
+        for (uint256 i = 0; i < 50; i++) {
+            vm.prank(User1.addr);
+            vm.deal(User1.addr, 10 ether);
+            linearSale.buyTokens{value: 10 ether}();
+            vm.stopPrank();
+        }
+
+        tokensFor1Eth = linearSale.calculateTokenAmount(ethAmount);
+
+        // Calculate ETH for those tokens
+        ethForTokens = linearSale.calculateEthAmount(tokensFor1Eth);
+
+        // Should get approximately same ETH amount back
+        assertApproxEqAbs(ethAmount, ethForTokens, 1e15);  // 1% error margin due to rounding
     }
 
     /// Invariant that tests sequentual buys and next user gets fewer tokens
