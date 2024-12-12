@@ -25,11 +25,8 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     error NoETHReceived();
     error TransferFailed();
 
-    constructor(uint256 totalSupply) Ownable(msg.sender) {
-        if (totalSupply == 0) {
-            revert InvalidTotalSupply();
-        }
-        token = new LinearToken(totalSupply);
+    constructor() Ownable(msg.sender) {
+        token = new LinearToken();
     }
 
     /////////////////////////////////////////////////////////////////

@@ -11,7 +11,6 @@ contract DualLinearPriceTokenSaleTest is Test {
 
     DualLinearPriceTokenSale public linearSale;
     LinearToken public token;
-    uint256 public constant TOTAL_SUPPLY = 100_000_000e18;
     // Create 3 users
     VmSafe.Wallet public User1;
     VmSafe.Wallet public User2;
@@ -35,7 +34,7 @@ contract DualLinearPriceTokenSaleTest is Test {
         vm.deal(User3.addr, 100 ether);
         vm.deal(Admin.addr, 100 ether);
         vm.startPrank(Admin.addr);
-        linearSale = new DualLinearPriceTokenSale(TOTAL_SUPPLY);
+        linearSale = new DualLinearPriceTokenSale();
         vm.stopPrank();
 
         token = linearSale.token();

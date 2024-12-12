@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title LinearToken
 contract LinearToken is ERC20, Ownable {
-    constructor(uint256 totalSupply) ERC20("Linear Price Token", "LPT") Ownable(msg.sender) {}
+    constructor() ERC20("Linear Price Token", "LPT") Ownable(msg.sender) {}
 
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
