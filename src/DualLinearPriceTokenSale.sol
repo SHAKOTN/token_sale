@@ -1,74 +1,20 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
-import {console} from "../lib/forge-std/src/console.sol";
-
-contract LinearToken is ERC20, Ownable {
-    uint256 public holders;
-
-    constructor(uint256 totalSupply) ERC20("Linear Price Token", "LPT") Ownable(msg.sender) {}
-
-    modifier updateHolders(address sender, address recipient, uint256 amount) {
-        // Store previous balances
-        uint256 prevSenderBalance = balanceOf(sender);
-        uint256 prevRecipientBalance = balanceOf(recipient);
-
-        _;
-
-        // Check if the sender's balance has decreased to zero
-        if (prevSenderBalance > 0 && balanceOf(sender) == 0) {
-            holders--;
-        }
-        // Check if the recipient's balance has increased from zero
-        if (prevRecipientBalance == 0 && balanceOf(recipient) > 0) {
-            holders++;
-        }
-    }
-
-    function transfer(address recipient, uint256 amount)
-        public
-        override
-        updateHolders(_msgSender(), recipient, amount)
-        returns (bool)
-    {
-        _transfer(_msgSender(), recipient, amount);
-        return true;
-    }
-
-    function mint(address to, uint256 amount) external updateHolders(address(0), to, amount) onlyOwner {
-        _mint(to, amount);
-    }
-
-    function burn(address from, uint256 amount) external updateHolders(from, address(0), amount) onlyOwner {
-        _burn(from, amount);
-    }
-
-    function transferFrom(address from, address to, uint256 value)
-        public
-        override
-        updateHolders(from, to, value)
-        returns (bool)
-    {
-        address spender = _msgSender();
-        _spendAllowance(from, spender, value);
-        _transfer(from, to, value);
-        return true;
-    }
-}
+import "./LinearToken.sol";
 
 contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
-    using EnumerableSet for EnumerableSet.AddressSet;
-
     LinearToken public immutable token;
 
     // Price parameters. Those are arbitrary values and should be adjusted based on the tokenomics
     uint256 public constant INITIAL_PRICE = 0.001 ether; // 0.001 ETH
-    uint256 public constant SUPPLY_RATE = 0.00000001 ether; // 0.00000001 ETH per token
-    uint256 public constant HOLDER_RATE = 0.0000001 ether; // 0.0000001 ETH per holder
+    uint256 public constant PRICE_INCREMENT = 0.00000001 ether; // 0.00000001 ETH per ETH received
+
+    /// @notice Internal accounting variable to prevent any donation attacks
+    uint256 public totalEthReceived;
 
     event TokensPurchased(address indexed buyer, uint256 ethAmount, uint256 tokenAmount);
     event TokensSold(address indexed seller, uint256 tokenAmount, uint256 ethAmount);
@@ -83,97 +29,71 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     //////////////////////// View functions /////////////////////////
     /////////////////////////////////////////////////////////////////
 
+    /// @notice Returns the current price of the token
     function getCurrentPrice() public view returns (uint256) {
-        if (token.holders() == 0 || token.totalSupply() == 0) {
-            return INITIAL_PRICE;
-        }
-        uint256 supplyImpact = SUPPLY_RATE * token.totalSupply() / 10 ** token.decimals();
-        uint256 holderImpact = HOLDER_RATE * token.holders();
-        return INITIAL_PRICE + supplyImpact + holderImpact;
+        return INITIAL_PRICE + (PRICE_INCREMENT * totalEthReceived / 10 ** token.decimals());
     }
 
-    function calculateSellPrice(uint256 tokenAmount) public view returns (uint256) {
-        uint256 adjustedHolders = token.holders() - 1;
-        uint256 adjustedBalance = token.totalSupply() - tokenAmount;
-
-        if (adjustedHolders == 0 || adjustedBalance == 0) {
-            return INITIAL_PRICE;
-        }
-
-        uint256 supplyImpact = SUPPLY_RATE * adjustedBalance / 10 ** token.decimals();
-        uint256 holderImpact = HOLDER_RATE * adjustedHolders;
-        return INITIAL_PRICE + supplyImpact + holderImpact;
-    }
-
-    function getPrice(bool isBuying, uint256 amount) public view returns (uint256) {
-        if (isBuying) {
-            // For buying, use future state (after buyer joins)
-            uint256 futureHolders = token.holders() + 1;
-            uint256 futureBalance = token.totalSupply() + amount;
-            uint256 supplyImpact = SUPPLY_RATE * futureBalance / 10 ** token.decimals();
-            uint256 holderImpact = HOLDER_RATE * futureHolders;
-            return INITIAL_PRICE + supplyImpact + holderImpact;
-        } else {
-            // For selling, use state after seller leaves
-            uint256 remainingHolders = token.holders() - 1;
-            uint256 remainingBalance = token.totalSupply() - amount;
-
-            if (remainingHolders == 0 || remainingBalance == 0) {
-                return INITIAL_PRICE;
-            }
-
-            uint256 supplyImpact = SUPPLY_RATE * remainingBalance / 10 ** token.decimals();
-            uint256 holderImpact = HOLDER_RATE * remainingHolders;
-            return INITIAL_PRICE + supplyImpact + holderImpact;
-        }
-    }
-
+    /// @notice Returns the amount of tokens that can be bought with the given amount of ETH
+    /// @param ethAmount The amount of ETH to be used to buy tokens
+    /// @return The amount of tokens that can be bought
     function calculateTokenAmount(uint256 ethAmount) public view returns (uint256) {
         require(ethAmount > 0, "Amount must be greater than 0");
         uint256 currentPrice = getCurrentPrice();
         return (ethAmount * 10 ** token.decimals()) / currentPrice;
     }
 
+    /// @notice Returns the amount of ETH that can be received by selling the given amount of tokens
+    /// @param tokenAmount The amount of tokens to be sold
+    /// @return The amount of ETH that can be received
     function calculateEthAmount(uint256 tokenAmount) public view returns (uint256) {
         require(tokenAmount > 0, "Amount must be greater than 0");
         // In case there is one holder, we should give back only the initial price
-        uint256 currentPrice = token.holders() > 1 ? calculateSellPrice(tokenAmount) : INITIAL_PRICE;
+        uint256 currentPrice = _calculateSellPrice(tokenAmount);
         return (tokenAmount * currentPrice) / 10 ** token.decimals();
-    }
-
-    function getHolderCount() external view returns (uint256) {
-        return token.holders();
     }
 
     /////////////////////////////////////////////////////////////////
     //////////////////////// State modifying functions //////////////
     /////////////////////////////////////////////////////////////////
 
+    /// @notice Allows users to buy tokens by sending ETH to the contract
     function buyTokens() external payable nonReentrant {
         require(msg.value > 0, "Must send ETH to buy tokens");
 
         uint256 tokenAmount = calculateTokenAmount(msg.value);
         require(tokenAmount > 0, "Not enough ETH sent");
-
+        totalEthReceived += msg.value;
         token.mint(msg.sender, tokenAmount);
         emit TokensPurchased(msg.sender, msg.value, tokenAmount);
     }
 
+    /// @notice Allows users to sell tokens and receive ETH from the contract
+    /// @param tokenAmount The amount of tokens to be sold
     function sellTokens(uint256 tokenAmount) external nonReentrant {
         require(tokenAmount > 0, "Amount must be greater than 0");
-
         uint256 ethAmount = calculateEthAmount(tokenAmount);
-        require(address(this).balance >= ethAmount, "Contract has insufficient ETH balance");
 
         require(token.transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
-
+        totalEthReceived -= ethAmount;
         token.burn(address(this), tokenAmount);
         (bool success,) = payable(msg.sender).call{value: ethAmount}("");
         require(success, "ETH transfer failed");
         emit TokensSold(msg.sender, tokenAmount, ethAmount);
     }
 
+    /// @notice Returns the amount of ETH that can be received by selling the given amount of tokens,
+    /// @notice we do it, because each sell should decrease the price, kinda like get_dy in Curve
+    /// @param tokenAmount The amount of tokens to be sold
+    /// @return The amount of ETH that can be received
+    function _calculateSellPrice(uint256 tokenAmount) private view returns (uint256) {
+        uint256 ethAmount = (tokenAmount * getCurrentPrice()) / 10 ** token.decimals();
+        uint256 adjustedEthReceived = totalEthReceived > ethAmount ? totalEthReceived - ethAmount : 0;
+        return INITIAL_PRICE + (PRICE_INCREMENT * adjustedEthReceived / 10 ** token.decimals());
+    }
+
     // Admin functions
+    /// @notice Withdraws the ETH balance of the contract to the owner
     function withdrawEth() external onlyOwner {
         uint256 balance = address(this).balance;
         require(balance > 0, "No ETH to withdraw");
