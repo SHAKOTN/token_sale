@@ -352,7 +352,7 @@ contract DualLinearPriceTokenSaleTest is Test {
         ethForTokens = linearSale.calculateEthAmount(tokensFor1Eth);
 
         // Should get approximately same ETH amount back
-        assertApproxEqAbs(ethAmount, ethForTokens, 1e15);  // 1% error margin due to rounding
+        assertApproxEqAbs(ethAmount, ethForTokens, 1e15); // 1% error margin due to rounding
     }
 
     /// Invariant that tests sequentual buys and next user gets fewer tokens
