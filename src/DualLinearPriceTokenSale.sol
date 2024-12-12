@@ -20,8 +20,15 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     event TokensSold(address indexed seller, uint256 tokenAmount, uint256 ethAmount);
     event PriceUpdate(uint256 newPrice);
 
+    error InvalidTotalSupply();
+    error InvalidAmount();
+    error NoETHReceived();
+    error TransferFailed();
+
     constructor(uint256 totalSupply) Ownable(msg.sender) {
-        require(totalSupply > 0, "Total supply must be greater than 0");
+        if (totalSupply == 0) {
+            revert InvalidTotalSupply();
+        }
         token = new LinearToken(totalSupply);
     }
 
@@ -38,7 +45,9 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     /// @param ethAmount The amount of ETH to be used to buy tokens
     /// @return The amount of tokens that can be bought
     function calculateTokenAmount(uint256 ethAmount) public view returns (uint256) {
-        require(ethAmount > 0, "Amount must be greater than 0");
+        if (ethAmount == 0) {
+            revert InvalidAmount();
+        }
         uint256 currentPrice = getCurrentPrice();
         return (ethAmount * 10 ** token.decimals()) / currentPrice;
     }
@@ -47,8 +56,9 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     /// @param tokenAmount The amount of tokens to be sold
     /// @return The amount of ETH that can be received
     function calculateEthAmount(uint256 tokenAmount) public view returns (uint256) {
-        require(tokenAmount > 0, "Amount must be greater than 0");
-        // In case there is one holder, we should give back only the initial price
+        if (tokenAmount == 0) {
+            revert InvalidAmount();
+        }
         uint256 currentPrice = _calculateSellPrice(tokenAmount);
         return (tokenAmount * currentPrice) / 10 ** token.decimals();
     }
@@ -59,10 +69,14 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
 
     /// @notice Allows users to buy tokens by sending ETH to the contract
     function buyTokens() external payable nonReentrant {
-        require(msg.value > 0, "Must send ETH to buy tokens");
+        if (msg.value == 0) {
+            revert NoETHReceived();
+        }
 
         uint256 tokenAmount = calculateTokenAmount(msg.value);
-        require(tokenAmount > 0, "Not enough ETH sent");
+        if (tokenAmount == 0) {
+            revert InvalidAmount();
+        }
         totalEthReceived += msg.value;
         token.mint(msg.sender, tokenAmount);
         emit TokensPurchased(msg.sender, msg.value, tokenAmount);
@@ -71,14 +85,22 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     /// @notice Allows users to sell tokens and receive ETH from the contract
     /// @param tokenAmount The amount of tokens to be sold
     function sellTokens(uint256 tokenAmount) external nonReentrant {
-        require(tokenAmount > 0, "Amount must be greater than 0");
+        if (tokenAmount == 0) {
+            revert InvalidAmount();
+        }
         uint256 ethAmount = calculateEthAmount(tokenAmount);
 
-        require(token.transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
+        bool success = token.transferFrom(msg.sender, address(this), tokenAmount);
+        if (!success) {
+            revert TransferFailed();
+        }
+        // Decrease the totalEthReceived to decrease the price after the sell
         totalEthReceived -= ethAmount;
         token.burn(address(this), tokenAmount);
-        (bool success,) = payable(msg.sender).call{value: ethAmount}("");
-        require(success, "ETH transfer failed");
+        (success,) = payable(msg.sender).call{value: ethAmount}("");
+        if (!success) {
+            revert TransferFailed();
+        }
         emit TokensSold(msg.sender, tokenAmount, ethAmount);
     }
 
@@ -87,6 +109,7 @@ contract DualLinearPriceTokenSale is Ownable, ReentrancyGuard {
     /// @param tokenAmount The amount of tokens to be sold
     /// @return The amount of ETH that can be received
     function _calculateSellPrice(uint256 tokenAmount) private view returns (uint256) {
+        // Sell price is calculated in a get_dy fashion, as we need to know price derivative
         uint256 ethAmount = (tokenAmount * getCurrentPrice()) / 10 ** token.decimals();
         uint256 adjustedEthReceived = totalEthReceived > ethAmount ? totalEthReceived - ethAmount : 0;
         return INITIAL_PRICE + (PRICE_INCREMENT * adjustedEthReceived / 10 ** token.decimals());

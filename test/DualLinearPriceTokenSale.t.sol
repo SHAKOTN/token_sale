@@ -325,4 +325,49 @@ contract DualLinearPriceTokenSaleTest is Test {
         uint256 totalSupplyPrice = linearSale.calculateEthAmount(token.totalSupply());
         assertGe(totalEthReceived, totalSupplyPrice);
     }
+
+    /// Test that the exchange rate is consistent
+    function testExchangeRateConsistency() public {
+        uint256 ethAmount = 1 ether;
+
+        // Calculate tokens for 1 ETH
+        uint256 tokensFor1Eth = linearSale.calculateTokenAmount(ethAmount);
+
+        // Calculate ETH for those tokens
+        uint256 ethForTokens = linearSale.calculateEthAmount(tokensFor1Eth);
+
+        // Should get approximately same ETH amount back
+        assertEq(ethAmount, ethForTokens);
+    }
+
+    /// Invariant that tests sequentual buys and next user gets fewer tokens
+    function testSequentialTradeFairness() public {
+        uint256 constantEthAmount = 1 ether;
+        vm.prank(User1.addr);
+        uint256 tokens1 = linearSale.calculateTokenAmount(constantEthAmount);
+        linearSale.buyTokens{value: constantEthAmount}();
+        vm.prank(User2.addr);
+        uint256 tokens2 = linearSale.calculateTokenAmount(constantEthAmount);
+        linearSale.buyTokens{value: constantEthAmount}();
+
+        // Second buyer should get fewer tokens due to price increase
+        assertLt(tokens2, tokens1);
+    }
+
+    /// Simple invariant that tests no free tokens can be obtained
+    function testNoFreeTokens() public {
+        // Try to buy with 0 ETH
+        vm.prank(User1.addr);
+        vm.expectRevert();
+        linearSale.buyTokens{value: 0}();
+    }
+
+    function testLargeNumbersHandling() public {
+        vm.deal(User1.addr, type(uint128).max);
+        vm.prank(User1.addr);
+        linearSale.buyTokens{value: type(uint128).max}();
+
+        // Should still be able to calculate prices correctly
+        assertGt(linearSale.getCurrentPrice(), linearSale.INITIAL_PRICE());
+    }
 }
